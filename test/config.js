@@ -36,6 +36,9 @@ NativeConfiguration.prototype.start = function(callback) {
     .purge()
     .then(function() {
       console.log('[purge the directories]');
+      console.dir(self.manager);
+      console.log(self.manager.start.toString());
+
       return self.manager.start();
     })
     .then(function() {
