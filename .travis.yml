@@ -30,3 +30,9 @@ jobs:
     - stage: tests
       node_js: 10
       env: MONGODB_VERSION=3.6.x
+
+    - stage: replicaset_tests
+      node_js: 4
+      env:
+        - MONGODB_VERSION=3.6.x
+        - MONGODB_ENVIRONMENT="replicaset"
