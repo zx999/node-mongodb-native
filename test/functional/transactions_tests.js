@@ -13,6 +13,7 @@ const environments = require('../environments');
 // mlaunch init --replicaset --arbiter  --name rs --hostname localhost --port 31000 --setParameter enableTestCommands=1 --binarypath /Users/mbroadst/Downloads/mongodb-osx-x86_64-enterprise-4.1.0-158-g3d62f3c/bin
 
 chai.use(require('chai-subset'));
+chai.use(require('../match_transaction_spec').default);
 chai.config.includeStack = true;
 chai.config.showDiff = true;
 chai.config.truncateThreshold = 0;
@@ -22,55 +23,6 @@ function isPlainObject(value) {
 }
 
 process.on('unhandledRejection', err => console.dir(err));
-
-/**
- * Finds placeholder values in a deeply nested object.
- *
- * NOTE: This also mutates the object, by removing the values for comparison
- *
- * @param {Object} input the object to find placeholder values in
- */
-function findPlaceholders(value, parent) {
-  return Object.keys(value).reduce((result, key) => {
-    if (isPlainObject(value[key])) {
-      return result.concat(
-        findPlaceholders(value[key], [value, key]).map(x => {
-          if (x.path.startsWith('$')) {
-            x.path = key;
-          } else {
-            x.path = `${key}.${x.path}`;
-          }
-
-          return x;
-        })
-      );
-    }
-
-    if (value[key] === null) {
-      delete value[key];
-      result.push({ path: key, type: null });
-    } else if (value[key] === 42 || value[key] === '42') {
-      if (key.startsWith('$number')) {
-        result.push({ path: key, type: 'number' });
-      } else if (value[key] === 42) {
-        result.push({ path: key, type: 'exists' });
-      } else {
-        result.push({ path: key, type: 'string' });
-      }
-
-      // NOTE: fix this, it just passes the current examples
-      if (parent == null) {
-        delete value[key];
-      } else {
-        delete parent[0][parent[1]];
-      }
-    } else if (value[key] === '') {
-      result.push({ path: key, type: 'string' });
-    }
-
-    return result;
-  }, []);
-}
 
 function translateClientOptions(options) {
   Object.keys(options).forEach(key => {
@@ -445,20 +397,14 @@ function validateExpectations(commandEvents, spec, testContext, operationContext
 
   if (spec.expectations && Array.isArray(spec.expectations) && spec.expectations.length > 0) {
     const actualEvents = normalizeCommandShapes(commandEvents);
-    const rawExpectedEvents = spec.expectations.map(x =>
-      linkSessionData(x.command_started_event, { session0, session1 })
-    );
 
-    const expectedEventPlaceholders = rawExpectedEvents.map(event =>
-      findPlaceholders(event.command)
-    );
+    const rawExpectedEvents = spec.expectations.map(x => x.command_started_event);
 
     const expectedEvents = normalizeCommandShapes(rawExpectedEvents);
     expect(actualEvents).to.have.length(expectedEvents.length);
 
     expectedEvents.forEach((expected, idx) => {
       const actual = actualEvents[idx];
-      const placeHolders = expectedEventPlaceholders[idx]; // eslint-disable-line
 
       expect(actual.commandName).to.equal(expected.commandName);
       expect(actual.databaseName).to.equal(expected.databaseName);
@@ -466,40 +412,11 @@ function validateExpectations(commandEvents, spec, testContext, operationContext
       const actualCommand = actual.command;
       const expectedCommand = expected.command;
 
-      // handle validation of placeholder values
-      // placeHolders.forEach(placeholder => {
-      //   const parsedActual = EJSON.parse(JSON.stringify(actualCommand), {
-      //     relaxed: true
-      //   });
-
-      //   if (placeholder.type === null) {
-      //     expect(parsedActual).to.not.have.all.nested.property(placeholder.path);
-      //   } else if (placeholder.type === 'string') {
-      //     expect(parsedActual).nested.property(placeholder.path).to.exist;
-      //     expect(parsedActual)
-      //       .nested.property(placeholder.path)
-      //       .to.have.length.greaterThan(0);
-      //   } else if (placeholder.type === 'number') {
-      //     expect(parsedActual).nested.property(placeholder.path).to.exist;
-      //     expect(parsedActual)
-      //       .nested.property(placeholder.path)
-      //       .to.be.greaterThan(0);
-      //   } else if (placeholder.type === 'exists') {
-      //     expect(parsedActual).nested.property(placeholder.path).to.exist;
-      //   }
-      // });
-
-      // compare the command
-      expect(actualCommand).to.containSubset(expectedCommand);
+      expect(actualCommand)
+        .withSessionData({ session0, session1 })
+        .to.matchTransactionSpec(expectedCommand);
     });
   }
-}
-
-function linkSessionData(command, context) {
-  const session = context[command.command.lsid];
-  const result = Object.assign({}, command);
-  result.command.lsid = JSON.parse(EJSON.stringify(session.id));
-  return result;
 }
 
 function normalizeCommandShapes(commands) {
